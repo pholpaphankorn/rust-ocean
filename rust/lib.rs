@@ -92,6 +92,22 @@ fn gerstner_height(x: f32, z: f32, time: f32) -> f32 {
     dy
 }
 
+// Fast deterministic noise — looks random but is pure math
+// Returns a value in [-1, 1]
+fn noise(x: f32, t: f32) -> f32 {
+    let n = (x * 127.1 + t * 311.7).sin() * 43758.545;
+    n - n.floor() - 0.5 // fract mapped to [-0.5, 0.5] * 2
+}
+
+// Slowly varying amplitude envelope per x position
+// Makes some areas calmer, some wilder, shifting over time
+fn amplitude_envelope(x: f32, t: f32) -> f32 {
+    let slow = (x * 0.3 + t * 0.07).sin(); // slow spatial variation
+    let drift = (x * 0.11 + t * 0.03).cos(); // even slower drift
+                                             // map from [-1,1] to [0.3, 1.7] — never fully calm, never too wild
+    0.3 + (slow + drift + 2.0) * 0.35
+}
+
 // ─── Simulation State ─────────────────────────────────────────────────────────
 
 #[wasm_bindgen]
@@ -123,10 +139,26 @@ impl SimState {
         // SWE sees these as "incoming wave energy" and propagates them inward.
         let half = GRID as f32 / 2.0;
 
-        // Top edge (z=0): main swell source
+        // Top edge (z=0): chaotic multi-frequency swell source
         for x in 0..GRID {
             let px = (x as f32 - half) * WAVE_SCALE;
-            self.eta[0 * GRID + x] = 2.0 * gerstner_height(px, 0.0, self.time);
+
+            // Base Gerstner shape
+            let base = gerstner_height(px, 0.0, self.time);
+
+            // Add 3 extra sine waves at incommensurable frequencies
+            // → they never sync up → pattern never repeats
+            let f1 = (px * 2.3 + self.time * 0.97).sin() * 0.4; // medium ripple
+            let f2 = (px * 5.1 + self.time * 1.73).sin() * 0.2; // fast chop
+            let f3 = (px * 0.7 + self.time * 0.41).sin() * 0.6; // long swell
+
+            // Slowly varying amplitude envelope — some areas calmer, some wilder
+            let envelope = amplitude_envelope(x as f32, self.time);
+
+            // Hash noise for micro-irregularity
+            let micro = noise(x as f32, self.time) * 0.15;
+
+            self.eta[0 * GRID + x] = (base + f1 + f2 + f3 + micro) * envelope;
         }
 
         // ── Step 2: SWE leapfrog — update eta from velocity divergence ─────────
