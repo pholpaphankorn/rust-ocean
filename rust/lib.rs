@@ -139,28 +139,53 @@ impl SimState {
         // SWE sees these as "incoming wave energy" and propagates them inward.
         let half = GRID as f32 / 2.0;
 
-        // Top edge (z=0): chaotic multi-frequency swell source
+        // ── Chaotic multi-edge wave generation ────────────────────────────────────
+
+        // North edge (z=0): main long swell traveling south
         for x in 0..GRID {
             let px = (x as f32 - half) * WAVE_SCALE;
-
-            // Base Gerstner shape
             let base = gerstner_height(px, 0.0, self.time);
-
-            // Add 3 extra sine waves at incommensurable frequencies
-            // → they never sync up → pattern never repeats
-            let f1 = (px * 2.3 + self.time * 0.97).sin() * 0.4; // medium ripple
-            let f2 = (px * 5.1 + self.time * 1.73).sin() * 0.2; // fast chop
-            let f3 = (px * 0.7 + self.time * 0.41).sin() * 0.6; // long swell
-
-            // Slowly varying amplitude envelope — some areas calmer, some wilder
+            let f1 = (px * 2.3 + self.time * 0.97).sin() * 0.4;
+            let f2 = (px * 5.1 + self.time * 1.73).sin() * 0.2;
+            let f3 = (px * 0.7 + self.time * 0.41).sin() * 0.6;
             let envelope = amplitude_envelope(x as f32, self.time);
-
-            // Hash noise for micro-irregularity
             let micro = noise(x as f32, self.time) * 0.15;
-
             self.eta[0 * GRID + x] = (base + f1 + f2 + f3 + micro) * envelope;
         }
 
+        // South edge (z=GRID-1): storm chop traveling north
+        // different frequencies → never syncs with north edge
+        for x in 0..GRID {
+            let px = (x as f32 - half) * WAVE_SCALE;
+            let f1 = (px * 3.1 + self.time * 1.13).sin() * 0.5;
+            let f2 = (px * 1.7 + self.time * 0.67).sin() * 0.3;
+            let f3 = (px * 6.3 + self.time * 2.11).sin() * 0.15;
+            let envelope = amplitude_envelope(x as f32 + 50.0, self.time + 7.3); // offset → different phase
+            let micro = noise(x as f32 + 100.0, self.time) * 0.12;
+            self.eta[(GRID - 1) * GRID + x] = (f1 + f2 + f3 + micro) * envelope;
+        }
+
+        // West edge (x=0): cross-swell traveling east
+        for z in 0..GRID {
+            let pz = (z as f32 - half) * WAVE_SCALE;
+            let f1 = (pz * 1.9 + self.time * 0.83).sin() * 0.45;
+            let f2 = (pz * 4.3 + self.time * 1.51).sin() * 0.18;
+            let f3 = (pz * 0.9 + self.time * 0.37).sin() * 0.5;
+            let envelope = amplitude_envelope(z as f32 + 25.0, self.time + 3.1);
+            let micro = noise(z as f32 + 200.0, self.time) * 0.1;
+            self.eta[z * GRID + 0] = (f1 + f2 + f3 + micro) * envelope;
+        }
+
+        // East edge (x=GRID-1): diagonal chop traveling west
+        for z in 0..GRID {
+            let pz = (z as f32 - half) * WAVE_SCALE;
+            let f1 = (pz * 2.7 + self.time * 1.29).sin() * 0.35;
+            let f2 = (pz * 0.5 + self.time * 0.53).sin() * 0.55;
+            let f3 = (pz * 7.1 + self.time * 1.97).sin() * 0.12;
+            let envelope = amplitude_envelope(z as f32 + 75.0, self.time + 11.7);
+            let micro = noise(z as f32 + 300.0, self.time) * 0.1;
+            self.eta[z * GRID + (GRID - 1)] = (f1 + f2 + f3 + micro) * envelope;
+        }
         // ── Step 2: SWE leapfrog — update eta from velocity divergence ─────────
         let mut new_eta = self.eta.clone();
         for z in 1..(GRID - 1) {
