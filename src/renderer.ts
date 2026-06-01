@@ -29,8 +29,11 @@ export class Renderer {
         entryPoint: 'vs_main',
         buffers: [
           {
-            arrayStride: 12, // 3 × float32
-            attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }],
+            arrayStride: 16, // ← 4 floats × 4 bytes
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: 'float32x3' }, // xyz
+              { shaderLocation: 1, offset: 12, format: 'float32' }, // color_y
+            ],
           },
         ],
       },

@@ -127,7 +127,7 @@ impl SimState {
         for x in 0..GRID {
             let px = (x as f32 - half) * WAVE_SCALE;
             self.eta[0 * GRID + x] = 2.0 * gerstner_height(px, 0.0, self.time);
-        }  
+        }
 
         // ── Step 2: SWE leapfrog — update eta from velocity divergence ─────────
         let mut new_eta = self.eta.clone();
@@ -176,7 +176,7 @@ impl SimState {
     }
 
     pub fn get_vertices(&self) -> Vec<f32> {
-        let mut vertices = Vec::with_capacity(GRID * GRID * 3);
+        let mut vertices = Vec::with_capacity(GRID * GRID * 4);
         let half = GRID as f32 / 2.0;
         let mean = self.eta.iter().sum::<f32>() / self.eta.len() as f32;
 
@@ -198,6 +198,7 @@ impl SimState {
                 vertices.push(px + gdx * energy);
                 vertices.push(swe_y + gdy * energy);
                 vertices.push(pz + gdz * energy);
+                vertices.push(swe_y); // ← color_y: slow SWE only, no flicker
             }
         }
         vertices
