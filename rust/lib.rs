@@ -108,6 +108,19 @@ fn amplitude_envelope(x: f32, t: f32) -> f32 {
     0.3 + (slow + drift + 2.0) * 0.35
 }
 
+// Slow independent activity envelope per edge [0.0 → 1.0]
+// Uses incommensurable periods so they never sync
+fn edge_activity(seed: f32, t: f32) -> f32 {
+    // combine two slow sine waves at different rates
+    let a = (t * 0.031 + seed).sin(); // ~200 step period
+    let b = (t * 0.017 + seed * 2.7).sin(); // ~370 step period
+                                            // map [-2, 2] → [0, 1] with smooth curve
+    let raw = (a + b) * 0.5; // [-1, 1]
+                             // smoothstep: spends more time near 0 and 1 (not fully linear)
+    let t01 = (raw + 1.0) * 0.5; // [0, 1]
+    t01 * t01 * (3.0 - 2.0 * t01) // smoothstep
+}
+
 // ─── Simulation State ─────────────────────────────────────────────────────────
 
 #[wasm_bindgen]
@@ -139,9 +152,8 @@ impl SimState {
         // SWE sees these as "incoming wave energy" and propagates them inward.
         let half = GRID as f32 / 2.0;
 
-        // ── Chaotic multi-edge wave generation ────────────────────────────────────
-
-        // North edge (z=0): main long swell traveling south
+        // North edge
+        let north_activity = edge_activity(0.0, self.time);
         for x in 0..GRID {
             let px = (x as f32 - half) * WAVE_SCALE;
             let base = gerstner_height(px, 0.0, self.time);
@@ -150,22 +162,24 @@ impl SimState {
             let f3 = (px * 0.7 + self.time * 0.41).sin() * 0.6;
             let envelope = amplitude_envelope(x as f32, self.time);
             let micro = noise(x as f32, self.time) * 0.15;
-            self.eta[0 * GRID + x] = (base + f1 + f2 + f3 + micro) * envelope;
+            // multiply entire edge by activity → smoothly fades in/out
+            self.eta[0 * GRID + x] = (base + f1 + f2 + f3 + micro) * envelope * north_activity;
         }
 
-        // South edge (z=GRID-1): storm chop traveling north
-        // different frequencies → never syncs with north edge
+        // South edge
+        let south_activity = edge_activity(3.7, self.time); // different seed → different rhythm
         for x in 0..GRID {
             let px = (x as f32 - half) * WAVE_SCALE;
             let f1 = (px * 3.1 + self.time * 1.13).sin() * 0.5;
             let f2 = (px * 1.7 + self.time * 0.67).sin() * 0.3;
             let f3 = (px * 6.3 + self.time * 2.11).sin() * 0.15;
-            let envelope = amplitude_envelope(x as f32 + 50.0, self.time + 7.3); // offset → different phase
+            let envelope = amplitude_envelope(x as f32 + 50.0, self.time + 7.3);
             let micro = noise(x as f32 + 100.0, self.time) * 0.12;
-            self.eta[(GRID - 1) * GRID + x] = (f1 + f2 + f3 + micro) * envelope;
+            self.eta[(GRID - 1) * GRID + x] = (f1 + f2 + f3 + micro) * envelope * south_activity;
         }
 
-        // West edge (x=0): cross-swell traveling east
+        // West edge
+        let west_activity = edge_activity(7.1, self.time); // different seed
         for z in 0..GRID {
             let pz = (z as f32 - half) * WAVE_SCALE;
             let f1 = (pz * 1.9 + self.time * 0.83).sin() * 0.45;
@@ -173,10 +187,11 @@ impl SimState {
             let f3 = (pz * 0.9 + self.time * 0.37).sin() * 0.5;
             let envelope = amplitude_envelope(z as f32 + 25.0, self.time + 3.1);
             let micro = noise(z as f32 + 200.0, self.time) * 0.1;
-            self.eta[z * GRID + 0] = (f1 + f2 + f3 + micro) * envelope;
+            self.eta[z * GRID + 0] = (f1 + f2 + f3 + micro) * envelope * west_activity;
         }
 
-        // East edge (x=GRID-1): diagonal chop traveling west
+        // East edge
+        let east_activity = edge_activity(13.3, self.time); // different seed
         for z in 0..GRID {
             let pz = (z as f32 - half) * WAVE_SCALE;
             let f1 = (pz * 2.7 + self.time * 1.29).sin() * 0.35;
@@ -184,8 +199,9 @@ impl SimState {
             let f3 = (pz * 7.1 + self.time * 1.97).sin() * 0.12;
             let envelope = amplitude_envelope(z as f32 + 75.0, self.time + 11.7);
             let micro = noise(z as f32 + 300.0, self.time) * 0.1;
-            self.eta[z * GRID + (GRID - 1)] = (f1 + f2 + f3 + micro) * envelope;
+            self.eta[z * GRID + (GRID - 1)] = (f1 + f2 + f3 + micro) * envelope * east_activity;
         }
+
         // ── Step 2: SWE leapfrog — update eta from velocity divergence ─────────
         let mut new_eta = self.eta.clone();
         for z in 1..(GRID - 1) {
