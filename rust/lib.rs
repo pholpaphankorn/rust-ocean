@@ -4,17 +4,102 @@ const GRID: usize = 128;
 const DT: f32 = 0.1;
 const G: f32 = 9.8;
 const DX: f32 = 1.0;
-const H: f32 = 1.0; // ← fixed mean depth (linearization point)
+const H: f32 = 1.0;
 const DAMPING: f32 = 0.995;
 
-// We simulate η (deviation from mean), not total height
-// This keeps wave speed = sqrt(G*H) = constant → always stable
+// Scale factor: maps grid coords → wave space
+// Smaller = longer waves relative to grid
+const WAVE_SCALE: f32 = 0.08;
+
+// ─── Gerstner Wave ────────────────────────────────────────────────────────────
+
+struct GerstnerWave {
+    amplitude: f32,
+    frequency: f32,
+    speed: f32,
+    dir_x: f32,
+    dir_z: f32,
+    steepness: f32,
+}
+
+impl GerstnerWave {
+    fn displace(&self, x: f32, z: f32, time: f32) -> (f32, f32, f32) {
+        let dot = self.dir_x * x + self.dir_z * z;
+        let phase = self.frequency * dot + self.speed * time;
+
+        let dy = self.amplitude * phase.sin();
+        let dx = self.steepness * self.amplitude * self.dir_x * phase.cos();
+        let dz = self.steepness * self.amplitude * self.dir_z * phase.cos();
+
+        (dx, dy, dz)
+    }
+}
+
+// Four stacked waves — different scales and directions
+fn gerstner_stack(x: f32, z: f32, time: f32) -> (f32, f32, f32) {
+    let waves: [GerstnerWave; 4] = [
+        // long rolling swell from the west
+        GerstnerWave {
+            amplitude: 0.8,
+            frequency: 0.15,
+            speed: 1.2,
+            dir_x: 1.0,
+            dir_z: 0.0,
+            steepness: 0.5,
+        },
+        // medium chop from the southwest
+        GerstnerWave {
+            amplitude: 0.35,
+            frequency: 0.3,
+            speed: 1.8,
+            dir_x: 0.7,
+            dir_z: 0.7,
+            steepness: 0.4,
+        },
+        // cross-chop from the south
+        GerstnerWave {
+            amplitude: 0.18,
+            frequency: 0.55,
+            speed: 2.4,
+            dir_x: 0.2,
+            dir_z: 0.98,
+            steepness: 0.3,
+        },
+        // fine ripples from the northwest
+        GerstnerWave {
+            amplitude: 0.07,
+            frequency: 1.1,
+            speed: 3.5,
+            dir_x: -0.7,
+            dir_z: 0.7,
+            steepness: 0.2,
+        },
+    ];
+
+    let (mut tdx, mut tdy, mut tdz) = (0.0_f32, 0.0_f32, 0.0_f32);
+    for wave in &waves {
+        let (dx, dy, dz) = wave.displace(x, z, time);
+        tdx += dx;
+        tdy += dy;
+        tdz += dz;
+    }
+    (tdx, tdy, tdz)
+}
+
+// Returns only the height (Y) at a boundary point — used to drive SWE edges
+fn gerstner_height(x: f32, z: f32, time: f32) -> f32 {
+    let (_, dy, _) = gerstner_stack(x, z, time);
+    dy
+}
+
+// ─── Simulation State ─────────────────────────────────────────────────────────
 
 #[wasm_bindgen]
 pub struct SimState {
-    eta: Vec<f32>, // surface deviation from mean (+ = crest, - = trough)
-    u: Vec<f32>,   // x-velocity on x-faces
-    v: Vec<f32>,   // z-velocity on z-faces
+    eta: Vec<f32>, // SWE surface deviation
+    u: Vec<f32>,   // x-velocity on x-faces (staggered)
+    v: Vec<f32>,   // z-velocity on z-faces (staggered)
+    time: f32,     // elapsed simulation time
 }
 
 #[wasm_bindgen]
@@ -22,61 +107,48 @@ impl SimState {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         let size = GRID * GRID;
-        let mut eta = vec![0.0_f32; size];
 
-        // Gaussian splash — smooth initial condition, no sharp spikes
-        let cx = (GRID / 2) as f32;
-        let cz = (GRID / 2) as f32;
-        for z in 0..GRID {
-            for x in 0..GRID {
-                let dx = x as f32 - cx;
-                let dz = z as f32 - cz;
-                let r2 = dx * dx + dz * dz;
-                eta[z * GRID + x] = 1.5 * (-r2 / 4.0).exp();
-            }
-        }
-
+        // Start flat — Gerstner boundary will build the ocean naturally
         SimState {
-            eta,
+            eta: vec![0.0; size],
             u: vec![0.0; size],
             v: vec![0.0; size],
+            time: 0.0,
         }
     }
 
     pub fn step(&mut self) {
-        // LEAPFROG — update η first, then u/v using new η
-        // This is symplectic (energy-conserving) by construction
+        // ── Step 1: Apply Gerstner boundary conditions BEFORE physics ──────────
+        // Drive all 4 edges with Gerstner wave heights.
+        // SWE sees these as "incoming wave energy" and propagates them inward.
+        let half = GRID as f32 / 2.0;
 
-        // Step 1: update η from velocity divergence
+        // Top edge (z=0): main swell source
+        for x in 0..GRID {
+            let px = (x as f32 - half) * WAVE_SCALE;
+            self.eta[0 * GRID + x] = 2.0 * gerstner_height(px, 0.0, self.time);
+        }  
+
+        // ── Step 2: SWE leapfrog — update eta from velocity divergence ─────────
         let mut new_eta = self.eta.clone();
-        for z in 0..GRID {
-            for x in 0..GRID {
+        for z in 1..(GRID - 1) {
+            // skip edges — they're driven by Gerstner
+            for x in 1..(GRID - 1) {
                 let i = z * GRID + x;
-
-                let u_r = if x + 1 < GRID {
-                    self.u[z * GRID + (x + 1)]
-                } else {
-                    0.0
-                };
-                let u_l = self.u[i]; // boundary: u[0,z] = 0 always
-                let v_b = if z + 1 < GRID {
-                    self.v[(z + 1) * GRID + x]
-                } else {
-                    0.0
-                };
-                let v_t = self.v[i]; // boundary: v[x,0] = 0 always
-
+                let u_r = self.u[z * GRID + (x + 1)];
+                let u_l = self.u[i];
+                let v_b = self.v[(z + 1) * GRID + x];
+                let v_t = self.v[i];
                 new_eta[i] -= DT * H / DX * ((u_r - u_l) + (v_b - v_t));
             }
         }
 
-        // Step 2: update u/v from gradient of NEW η
+        // ── Step 3: Update velocities from new eta gradient ────────────────────
         let mut new_u = self.u.clone();
         let mut new_v = self.v.clone();
 
         for z in 0..GRID {
             for x in 1..GRID {
-                // x=0 face stays 0 (wall boundary)
                 let i = z * GRID + x;
                 let il = z * GRID + (x - 1);
                 new_u[i] -= DT * G / DX * (new_eta[i] - new_eta[il]);
@@ -85,7 +157,6 @@ impl SimState {
         }
 
         for z in 1..GRID {
-            // z=0 face stays 0 (wall boundary)
             for x in 0..GRID {
                 let i = z * GRID + x;
                 let iu = (z - 1) * GRID + x;
@@ -97,23 +168,36 @@ impl SimState {
         self.eta = new_eta;
         self.u = new_u;
         self.v = new_v;
+        self.time += DT;
     }
+
     pub fn grid_size(&self) -> usize {
         GRID
     }
 
     pub fn get_vertices(&self) -> Vec<f32> {
-        let mut vertices = Vec::new();
+        let mut vertices = Vec::with_capacity(GRID * GRID * 3);
         let half = GRID as f32 / 2.0;
-
-        // calculate current mean height
         let mean = self.eta.iter().sum::<f32>() / self.eta.len() as f32;
 
         for z in 0..GRID {
             for x in 0..GRID {
-                vertices.push(x as f32 - half);
-                vertices.push(self.eta[z * GRID + x] - mean); // ← subtract mean
-                vertices.push(z as f32 - half);
+                let px = x as f32 - half;
+                let pz = z as f32 - half;
+
+                // SWE: large-scale energy distribution
+                let swe_y = self.eta[z * GRID + x] - mean;
+
+                // Gerstner: sharp surface detail on top
+                let (gdx, gdy, gdz) = gerstner_stack(px * WAVE_SCALE, pz * WAVE_SCALE, self.time);
+
+                // SWE energy modulates Gerstner amplitude:
+                // high SWE energy → wilder surface detail
+                let energy = 1.0 + swe_y.abs() * 1.5;
+
+                vertices.push(px + gdx * energy);
+                vertices.push(swe_y + gdy * energy);
+                vertices.push(pz + gdz * energy);
             }
         }
         vertices
@@ -136,16 +220,18 @@ impl SimState {
         indices
     }
 
+    // Interactive splash — adds a Gaussian disturbance on top of the ocean
+    // SWE propagates it naturally just like any other energy in the grid
     pub fn splash(&mut self, x: usize, z: usize, amount: f32) {
-        // Gaussian splash instead of single spike
         let cx = x as f32;
         let cz = z as f32;
-        for dz in 0..GRID {
-            for dx in 0..GRID {
+        for dz in 1..(GRID - 1) {
+            // skip edges — those are Gerstner-driven
+            for dx in 1..(GRID - 1) {
                 let ddx = dx as f32 - cx;
                 let ddz = dz as f32 - cz;
                 let r2 = ddx * ddx + ddz * ddz;
-                self.eta[dz * GRID + dx] += amount * (-r2 / 3.0).exp();
+                self.eta[dz * GRID + dx] += amount * (-r2 / 8.0).exp();
             }
         }
     }
