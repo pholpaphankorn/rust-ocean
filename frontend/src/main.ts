@@ -1,7 +1,7 @@
 // Entry point — wires Rust sim, renderer, camera, and wave generator
 // This is the only file that knows about all other modules
 
-import init, { SimState } from '../pkg/ocean_wasm';
+import init, { SimState } from '../../pkg/ocean_wasm';
 import { Renderer } from './renderer';
 import { Camera } from './camera';
 import { WaveGenerator } from './simulation';

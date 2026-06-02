@@ -1,6 +1,6 @@
 // Does NOT own SimState — receives it from main.ts
 
-import type { SimState } from '../pkg/ocean_wasm';
+import type { SimState } from '../../pkg/ocean_wasm';
 export class WaveGenerator {
   private sim: SimState;
   private grid: number;
