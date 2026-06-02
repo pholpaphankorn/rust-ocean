@@ -1,4 +1,4 @@
-use crate::waves::{gerstner_height, noise, amplitude_envelope, edge_activity, WAVE_SCALE};
+use crate::waves::{amplitude_envelope, edge_activity, gerstner_height, noise, WAVE_SCALE};
 
 pub const GRID: usize = 128;
 const DT: f32 = 0.1;
@@ -92,16 +92,16 @@ impl FluidGrid {
     /// ─── 2. HEIGHT UPDATE (Interior Only) ────────────────────────────────────
     fn update_heights(&mut self) {
         let mut new_eta = self.eta.clone();
-        
+
         // Skip edges (0 and GRID-1) — they are strictly driven by Gerstner inputs
         for z in 1..(GRID - 1) {
             for x in 1..(GRID - 1) {
                 let i = z * GRID + x;
                 let u_r = self.u[z * GRID + (x + 1)]; // flow out right
-                let u_l = self.u[i];                  // flow in left
+                let u_l = self.u[i]; // flow in left
                 let v_b = self.v[(z + 1) * GRID + x]; // flow out bottom
-                let v_t = self.v[i];                  // flow in top
-                
+                let v_t = self.v[i]; // flow in top
+
                 // Mass Conservation Leapfrog step
                 new_eta[i] -= DT * H / DX * ((u_r - u_l) + (v_b - v_t));
             }

@@ -49,7 +49,7 @@ impl SimState {
                 vertices.push(px + gdx * energy);
                 vertices.push(swe_y + gdy * energy);
                 vertices.push(pz + gdz * energy);
-                vertices.push(swe_y); 
+                vertices.push(swe_y);
             }
         }
         vertices

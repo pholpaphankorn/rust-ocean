@@ -25,16 +25,46 @@ impl GerstnerWave {
 
 pub fn gerstner_stack(x: f32, z: f32, time: f32) -> (f32, f32, f32) {
     let waves: [GerstnerWave; 4] = [
-        GerstnerWave { amplitude: 0.8, frequency: 0.15, speed: 1.2, dir_x: 1.0, dir_z: 0.0, steepness: 0.5 },
-        GerstnerWave { amplitude: 0.35, frequency: 0.3, speed: 1.8, dir_x: 0.7, dir_z: 0.7, steepness: 0.4 },
-        GerstnerWave { amplitude: 0.18, frequency: 0.55, speed: 2.4, dir_x: 0.2, dir_z: 0.98, steepness: 0.3 },
-        GerstnerWave { amplitude: 0.07, frequency: 1.1, speed: 3.5, dir_x: -0.7, dir_z: 0.7, steepness: 0.2 },
+        GerstnerWave {
+            amplitude: 0.8,
+            frequency: 0.15,
+            speed: 1.2,
+            dir_x: 1.0,
+            dir_z: 0.0,
+            steepness: 0.5,
+        },
+        GerstnerWave {
+            amplitude: 0.35,
+            frequency: 0.3,
+            speed: 1.8,
+            dir_x: 0.7,
+            dir_z: 0.7,
+            steepness: 0.4,
+        },
+        GerstnerWave {
+            amplitude: 0.18,
+            frequency: 0.55,
+            speed: 2.4,
+            dir_x: 0.2,
+            dir_z: 0.98,
+            steepness: 0.3,
+        },
+        GerstnerWave {
+            amplitude: 0.07,
+            frequency: 1.1,
+            speed: 3.5,
+            dir_x: -0.7,
+            dir_z: 0.7,
+            steepness: 0.2,
+        },
     ];
 
     let (mut tdx, mut tdy, mut tdz) = (0.0_f32, 0.0_f32, 0.0_f32);
     for wave in &waves {
         let (dx, dy, dz) = wave.displace(x, z, time);
-        tdx += dx; tdy += dy; tdz += dz;
+        tdx += dx;
+        tdy += dy;
+        tdz += dz;
     }
     (tdx, tdy, tdz)
 }
