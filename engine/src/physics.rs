@@ -23,10 +23,23 @@ impl FluidGrid {
         }
     }
 
+    /// High-level orchestration of a single physics tick
     pub fn compute_step(&mut self, time: f32) {
+        // Step 1: Force driven wave conditions at the grid borders
+        self.apply_gerstner_boundaries(time);
+
+        // Step 2: Propagate height (eta) based on horizontal fluid divergence
+        self.update_heights();
+
+        // Step 3: Propagate velocities (u, v) based on downhill pressure gradients
+        self.update_velocities();
+    }
+
+    /// ─── 1. BOUNDARY GENERATION (Edges Only) ─────────────────────────────────
+    fn apply_gerstner_boundaries(&mut self, time: f32) {
         let half = GRID as f32 / 2.0;
 
-        // 1. North edge
+        // North edge (z = 0)
         let north_activity = edge_activity(0.0, time);
         for x in 0..GRID {
             let px = (x as f32 - half) * WAVE_SCALE;
@@ -39,7 +52,7 @@ impl FluidGrid {
             self.eta[x] = (base + f1 + f2 + f3 + micro) * envelope * north_activity;
         }
 
-        // 2. South edge
+        // South edge (z = GRID - 1)
         let south_activity = edge_activity(3.7, time);
         for x in 0..GRID {
             let px = (x as f32 - half) * WAVE_SCALE;
@@ -51,7 +64,7 @@ impl FluidGrid {
             self.eta[(GRID - 1) * GRID + x] = (f1 + f2 + f3 + micro) * envelope * south_activity;
         }
 
-        // 3. West edge
+        // West edge (x = 0)
         let west_activity = edge_activity(7.1, time);
         for z in 0..GRID {
             let pz = (z as f32 - half) * WAVE_SCALE;
@@ -63,7 +76,7 @@ impl FluidGrid {
             self.eta[z * GRID] = (f1 + f2 + f3 + micro) * envelope * west_activity;
         }
 
-        // 4. East edge
+        // East edge (x = GRID - 1)
         let east_activity = edge_activity(13.3, time);
         for z in 0..GRID {
             let pz = (z as f32 - half) * WAVE_SCALE;
@@ -74,43 +87,53 @@ impl FluidGrid {
             let micro = noise(z as f32 + 300.0, time) * 0.1;
             self.eta[z * GRID + (GRID - 1)] = (f1 + f2 + f3 + micro) * envelope * east_activity;
         }
+    }
 
-        // SWE Leapfrog: Update eta
+    /// ─── 2. HEIGHT UPDATE (Interior Only) ────────────────────────────────────
+    fn update_heights(&mut self) {
         let mut new_eta = self.eta.clone();
+        
+        // Skip edges (0 and GRID-1) — they are strictly driven by Gerstner inputs
         for z in 1..(GRID - 1) {
             for x in 1..(GRID - 1) {
                 let i = z * GRID + x;
-                let u_r = self.u[z * GRID + (x + 1)];
-                let u_l = self.u[i];
-                let v_b = self.v[(z + 1) * GRID + x];
-                let v_t = self.v[i];
+                let u_r = self.u[z * GRID + (x + 1)]; // flow out right
+                let u_l = self.u[i];                  // flow in left
+                let v_b = self.v[(z + 1) * GRID + x]; // flow out bottom
+                let v_t = self.v[i];                  // flow in top
+                
+                // Mass Conservation Leapfrog step
                 new_eta[i] -= DT * H / DX * ((u_r - u_l) + (v_b - v_t));
             }
         }
+        self.eta = new_eta;
+    }
 
-        // Update velocities from gradient
+    /// ─── 3. MOMENTUM UPDATE (Full Grid) ──────────────────────────────────────
+    fn update_velocities(&mut self) {
         let mut new_u = self.u.clone();
         let mut new_v = self.v.clone();
 
+        // Update horizontal velocity (u) on x-staggered faces from height slope
         for z in 0..GRID {
             for x in 1..GRID {
                 let i = z * GRID + x;
                 let il = z * GRID + (x - 1);
-                new_u[i] -= DT * G / DX * (new_eta[i] - new_eta[il]);
+                new_u[i] -= DT * G / DX * (self.eta[i] - self.eta[il]);
                 new_u[i] *= DAMPING;
             }
         }
 
+        // Update vertical velocity (v) on z-staggered faces from height slope
         for z in 1..GRID {
             for x in 0..GRID {
                 let i = z * GRID + x;
                 let iu = (z - 1) * GRID + x;
-                new_v[i] -= DT * G / DX * (new_eta[i] - new_eta[iu]);
+                new_v[i] -= DT * G / DX * (self.eta[i] - self.eta[iu]);
                 new_v[i] *= DAMPING;
             }
         }
 
-        self.eta = new_eta;
         self.u = new_u;
         self.v = new_v;
     }
